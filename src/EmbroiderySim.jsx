@@ -1,7 +1,6 @@
 import { useRef, useState, useEffect } from "react";
 
 import { THREAD_COLORS, snap, sameHole } from "./constants";
-import { useClothTexture }               from "./useClothTexture";
 import { useRenderLoop }                 from "./useRenderLoop";
 import { useSim }                        from "./useSim";
 
@@ -14,11 +13,19 @@ import FlashMessage   from "./FlashMessage";
 
 export default function EmbroiderySim() {
   // ── Canvas refs ──────────────────────────────────────────────────────────
-  const clothRef  = useRef(null);   // offscreen — cloth texture only
   const canvasRef = useRef(null);   // onscreen  — animated render target
 
   // ── Thread colour selection ──────────────────────────────────────────────
-  const [selectedColor, setSelectedColor] = useState(THREAD_COLORS[0]);
+  const COLOR_KEY = "stitched.color.v1";
+  const [selectedColor, setSelectedColor] = useState(() => {
+    try {
+      const hex = localStorage.getItem(COLOR_KEY);
+      const found = THREAD_COLORS.find(c => c.hex === hex);
+      return found || THREAD_COLORS[0];
+    } catch {
+      return THREAD_COLORS[0];
+    }
+  });
 
   // ── Simulation state & handlers ──────────────────────────────────────────
   const {
@@ -36,22 +43,52 @@ export default function EmbroiderySim() {
     handleClear,
   } = useSim(canvasRef);
 
+  const handleSavePng = () => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const url = c.toDataURL("image/png");
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    a.href = url;
+    a.download = `stitched-${stamp}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const handleClearAll = () => {
+    const ok = window.confirm("Clear all stitches? This cannot be undone.");
+    if (!ok) return;
+    handleClear();
+  };
+
   // Keep sim colour in sync with UI selection
   useEffect(() => {
     sim.current.color = selectedColor.hex;
+    try { localStorage.setItem(COLOR_KEY, selectedColor.hex); } catch {}
   }, [selectedColor, sim]);
 
-  // ── Cloth texture (drawn once to offscreen canvas) ───────────────────────
-  useClothTexture(clothRef);
+  // Keep canvas sized to the window
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const resize = () => {
+      c.width  = window.innerWidth;
+      c.height = window.innerHeight;
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
 
   // ── Determine if hover is over the blocked hole (for StatusBar) ──────────
   const hSnap   = snap(sim.current.hoverX, sim.current.hoverY);
   const isBlocked = !isDragging &&
-                    sim.current.hoverX > 0 &&
+                    sim.current.hoverX > -900 &&
                     sameHole(hSnap, sim.current.lastExitHole);
 
   // ── RAF render loop ───────────────────────────────────────────────────────
-  useRenderLoop(canvasRef, clothRef, sim);
+  useRenderLoop(canvasRef, sim);
 
   return (
     <div
@@ -66,19 +103,9 @@ export default function EmbroiderySim() {
       }}
       onMouseMove={handleMouseMove}
     >
-      {/* Offscreen cloth-texture canvas — never rendered directly */}
-      <canvas
-        ref={clothRef}
-        width={1600}
-        height={1000}
-        style={{ display: "none" }}
-      />
-
       {/* Main render canvas */}
       <canvas
         ref={canvasRef}
-        width={window.innerWidth}
-        height={window.innerHeight}
         style={{ display: "block", cursor: "none" }}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
@@ -113,7 +140,7 @@ export default function EmbroiderySim() {
         isBlocked={isBlocked}
       />
 
-      <Controls onUndo={handleUndo} onClear={handleClear} />
+      <Controls onUndo={handleUndo} onClear={handleClearAll} onSave={handleSavePng} />
 
       <IntroTip visible={showTip} />
 
