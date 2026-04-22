@@ -1,5 +1,7 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { snap, sameHole } from "./constants";
+
+const STORAGE_KEY = "stitched.sim.v1";
 
 /**
  * useSim — all mutable embroidery state lives in a ref (sim.current) so
@@ -23,6 +25,8 @@ export function useSim(canvasRef) {
     threadEnd:   null, // {x,y} — hole the needle last exited from
     dragStart:   null, // {x,y} — hole the current drag began at
     isDragging:  false,
+    isPanning:   false,
+    panStart:    null, // {x,y, camX, camY} — screen px + cam at pan start
     dragCurX:    0,    // raw canvas X of current mouse position
     dragCurY:    0,
     hoverX:      -999,
@@ -31,6 +35,9 @@ export function useSim(canvasRef) {
     pulse:       0,
     // The hole the needle last came OUT of — cannot re-enter
     lastExitHole: null,
+    // Camera offset in world px (top-left of viewport in world space)
+    camX:        0,
+    camY:        0,
   });
 
   // React state — only what the UI panels need
@@ -39,6 +46,45 @@ export function useSim(canvasRef) {
   const [isDragging,  setIsDragging]  = useState(false);
   const [showTip,     setShowTip]     = useState(true);
   const [flash,       setFlash]       = useState("");
+
+  const didLoadRef = useRef(false);
+  const persist = useCallback(() => {
+    const s = sim.current;
+    const payload = {
+      stitches: s.stitches,
+      threadEnd: s.threadEnd,
+      lastExitHole: s.lastExitHole,
+      camX: s.camX,
+      camY: s.camY,
+      color: s.color,
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore quota / privacy mode
+    }
+  }, []);
+
+  useEffect(() => {
+    if (didLoadRef.current) return;
+    didLoadRef.current = true;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      const s = sim.current;
+      if (Array.isArray(data.stitches)) s.stitches = data.stitches;
+      if (data.threadEnd && typeof data.threadEnd.x === "number") s.threadEnd = data.threadEnd;
+      if (data.lastExitHole && typeof data.lastExitHole.x === "number") s.lastExitHole = data.lastExitHole;
+      if (typeof data.camX === "number") s.camX = data.camX;
+      if (typeof data.camY === "number") s.camY = data.camY;
+      if (typeof data.color === "string") s.color = data.color;
+      setStitchCount(s.stitches.filter(st => st && st.over).length);
+      setShowTip(false);
+    } catch {
+      // ignore corrupted storage
+    }
+  }, []);
 
   // ── Flash message helper ─────────────────────────────────────────────────
   const flashTimerRef = useRef(null);
@@ -55,12 +101,22 @@ export function useSim(canvasRef) {
     if (!rect) return;
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
-    const h  = snap(cx, cy);
     const s  = sim.current;
+
+    if (s.isPanning && s.panStart) {
+      const dx = cx - s.panStart.x;
+      const dy = cy - s.panStart.y;
+      s.camX = s.panStart.camX - dx;
+      s.camY = s.panStart.camY - dy;
+    }
+
+    const wx = cx + s.camX;
+    const wy = cy + s.camY;
+    const h  = snap(wx, wy);
     s.hoverX   = h.x;
     s.hoverY   = h.y;
-    s.dragCurX = cx;
-    s.dragCurY = cy;
+    s.dragCurX = wx;
+    s.dragCurY = wy;
   }, [canvasRef]);
 
   // ── Mouse leave ──────────────────────────────────────────────────────────
@@ -72,18 +128,46 @@ export function useSim(canvasRef) {
     // Cancel any in-progress drag cleanly
     s.isDragging = false;
     s.dragStart  = null;
+    s.isPanning  = false;
+    s.panStart   = null;
     setIsDragging(false);
   }, []);
 
   // ── Mouse down ───────────────────────────────────────────────────────────
   const handleMouseDown = useCallback((e) => {
+    // Middle mouse = pan the camera (infinite cloth)
+    if (e.button === 1) {
+      e.preventDefault();
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const s  = sim.current;
+      s.isPanning = true;
+      s.panStart  = { x: cx, y: cy, camX: s.camX, camY: s.camY };
+      return;
+    }
+
+    // Right mouse = pan the camera (preferred)
+    if (e.button === 2) {
+      e.preventDefault();
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const s  = sim.current;
+      s.isPanning = true;
+      s.panStart  = { x: cx, y: cy, camX: s.camX, camY: s.camY };
+      return;
+    }
+
     if (e.button !== 0) return;
     e.preventDefault();
     setShowTip(false);
 
     const s    = sim.current;
     const rect = canvasRef.current.getBoundingClientRect();
-    const h    = snap(e.clientX - rect.left, e.clientY - rect.top);
+    const h    = snap((e.clientX - rect.left) + s.camX, (e.clientY - rect.top) + s.camY);
 
     // RULE 1: cannot enter the same hole the needle just exited
     if (sameHole(h, s.lastExitHole)) {
@@ -92,20 +176,35 @@ export function useSim(canvasRef) {
     }
 
     s.dragStart  = h;
-    s.dragCurX   = e.clientX - rect.left;
-    s.dragCurY   = e.clientY - rect.top;
+    s.dragCurX   = (e.clientX - rect.left) + s.camX;
+    s.dragCurY   = (e.clientY - rect.top) + s.camY;
     s.isDragging = true;
     setIsDragging(true);
   }, [canvasRef, showFlash]);
 
   // ── Mouse up ─────────────────────────────────────────────────────────────
   const handleMouseUp = useCallback((e) => {
-    if (e.button !== 0) return;
     const s = sim.current;
+
+    if (e.button === 1) {
+      s.isPanning = false;
+      s.panStart  = null;
+      persist();
+      return;
+    }
+
+    if (e.button === 2) {
+      s.isPanning = false;
+      s.panStart  = null;
+      persist();
+      return;
+    }
+
+    if (e.button !== 0) return;
     if (!s.isDragging || !s.dragStart) return;
 
     const rect = canvasRef.current.getBoundingClientRect();
-    const end  = snap(e.clientX - rect.left, e.clientY - rect.top);
+    const end  = snap((e.clientX - rect.left) + s.camX, (e.clientY - rect.top) + s.camY);
 
     // Must release on a DIFFERENT hole from where the drag started
     if (sameHole(end, s.dragStart)) {
@@ -145,11 +244,12 @@ export function useSim(canvasRef) {
     s.lastExitHole = end;   // needle just exited here — cannot re-enter
     s.threadEnd    = end;
     setStitchCount(n => n + 1);
+    persist();
 
     s.isDragging = false;
     s.dragStart  = null;
     setIsDragging(false);
-  }, [canvasRef]);
+  }, [canvasRef, persist]);
 
   // ── Undo ─────────────────────────────────────────────────────────────────
   const handleUndo = useCallback(() => {
@@ -178,7 +278,8 @@ export function useSim(canvasRef) {
     }
 
     setStitchCount(n => Math.max(0, n - 1));
-  }, []);
+    persist();
+  }, [persist]);
 
   // ── Clear ────────────────────────────────────────────────────────────────
   const handleClear = useCallback(() => {
@@ -188,8 +289,13 @@ export function useSim(canvasRef) {
     s.dragStart  = null;
     s.isDragging = false;
     s.lastExitHole = null;
+    s.camX = 0;
+    s.camY = 0;
+    s.isPanning = false;
+    s.panStart  = null;
     setIsDragging(false);
     setStitchCount(0);
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
   }, []);
 
   return {

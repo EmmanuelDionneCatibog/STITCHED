@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import { snap, HOLE_R } from "./constants";
+import { createClothTileCache } from "./clothTiles";
 
 /**
  * useRenderLoop — drives the animationFrame render loop.
@@ -12,19 +13,23 @@ import { snap, HOLE_R } from "./constants";
  *  5. Thread-end glow and hover ring (when not dragging)
  *  6. "Blocked hole" red pulse when hovering over lastExitHole
  */
-export function useRenderLoop(canvasRef, clothRef, sim) {
+export function useRenderLoop(canvasRef, sim) {
   const rafRef = useRef(null);
+  const clothCacheRef = useRef(null);
 
   const render = useCallback(() => {
     const canvas = canvasRef.current;
-    const cloth  = clothRef.current;
-    if (!canvas || !cloth) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext("2d");
     const s   = sim.current;
     s.pulse   = (s.pulse + 0.045) % (Math.PI * 2);
 
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(-s.camX, -s.camY);
 
     // ── 1. Under-stitches (behind cloth) ──────────────────────────────────
     s.stitches.forEach(st => {
@@ -42,7 +47,8 @@ export function useRenderLoop(canvasRef, clothRef, sim) {
     });
 
     // ── 2. Cloth texture ───────────────────────────────────────────────────
-    ctx.drawImage(cloth, 0, 0);
+    if (!clothCacheRef.current) clothCacheRef.current = createClothTileCache();
+    clothCacheRef.current.draw(ctx, s.camX, s.camY, canvas.width, canvas.height);
 
     // ── 3. Over-stitches ──────────────────────────────────────────────────
     s.stitches.forEach(st => {
@@ -145,7 +151,7 @@ export function useRenderLoop(canvasRef, clothRef, sim) {
       }
 
       // ── 6. Hover ring / blocked-hole indicator ───────────────────────────
-      if (s.hoverX > 0) {
+      if (s.hoverX > -900) {
         const hSnap    = snap(s.hoverX, s.hoverY);
         const blocked  = s.lastExitHole &&
                          hSnap.x === s.lastExitHole.x &&
@@ -186,8 +192,10 @@ export function useRenderLoop(canvasRef, clothRef, sim) {
       }
     }
 
+    ctx.restore();
+
     rafRef.current = requestAnimationFrame(render);
-  }, [canvasRef, clothRef, sim]);
+  }, [canvasRef, sim]);
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(render);
