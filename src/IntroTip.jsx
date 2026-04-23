@@ -23,7 +23,7 @@ export default function IntroTip({ visible }) {
           textAlign:      "center",
           zIndex:         60,
           backdropFilter: "blur(14px)",
-          maxWidth:       380,
+          maxWidth:       420,
           pointerEvents:  "none",
           animation:      "fadeUp 0.5s ease",
         }}
@@ -48,6 +48,10 @@ export default function IntroTip({ visible }) {
           <br />
           <span style={{ color: "#90c0f0" }}>Release</span> — stitch lands where you let go
           <br />
+          <span style={{ color: "#90c0f0" }}>Hold right click + drag</span> — move the camera
+          <br />
+          <span style={{ color: "#90c0f0" }}>Scroll</span> — change hole spacing
+          <br />
           <span style={{ color: "#c07050" }}>⊗</span>
           <span style={{ color: "#304060", fontSize: 11 }}> you cannot re-enter the hole you just exited</span>
         </div>
@@ -62,3 +66,4 @@ export default function IntroTip({ visible }) {
     </>
   );
 }
+

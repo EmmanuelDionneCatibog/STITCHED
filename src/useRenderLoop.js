@@ -29,7 +29,8 @@ export function useRenderLoop(canvasRef, sim) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
-    ctx.translate(-s.camX, -s.camY);
+    const z = typeof s.zoom === "number" && s.zoom > 0 ? s.zoom : 1;
+    ctx.setTransform(z, 0, 0, z, -s.camX * z, -s.camY * z);
 
     // ── 1. Under-stitches (behind cloth) ──────────────────────────────────
     s.stitches.forEach(st => {
@@ -48,7 +49,7 @@ export function useRenderLoop(canvasRef, sim) {
 
     // ── 2. Cloth texture ───────────────────────────────────────────────────
     if (!clothCacheRef.current) clothCacheRef.current = createClothTileCache();
-    clothCacheRef.current.draw(ctx, s.camX, s.camY, canvas.width, canvas.height);
+    clothCacheRef.current.draw(ctx, s.camX, s.camY, canvas.width / z, canvas.height / z);
 
     // ── 3. Over-stitches ──────────────────────────────────────────────────
     s.stitches.forEach(st => {

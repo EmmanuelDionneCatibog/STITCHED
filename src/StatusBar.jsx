@@ -15,7 +15,11 @@ export default function StatusBar({ selectedColor, stitchCount, isDragging, isBl
   } else if (isDragging) {
     hint = <span style={{ color: "#70e090", fontSize: 10, fontStyle: "italic" }}>▼ stitching — release to set</span>;
   } else {
-    hint = <span style={{ color: "#e0a040", fontSize: 10, fontStyle: "italic" }}>▲ hold & drag to stitch</span>;
+    hint = (
+      <span style={{ color: "#e0a040", fontSize: 10, fontStyle: "italic" }}>
+        ▲ left drag to stitch · right drag to pan · scroll to zoom
+      </span>
+    );
   }
 
   return (
@@ -43,12 +47,12 @@ export default function StatusBar({ selectedColor, stitchCount, isDragging, isBl
 
       <span
         style={{
-          display:     "inline-block",
-          width:       10,
-          height:      10,
+          display:      "inline-block",
+          width:        10,
+          height:       10,
           borderRadius: "50%",
-          background:  selectedColor.hex,
-          boxShadow:   `0 0 5px ${selectedColor.hex}`,
+          background:   selectedColor.hex,
+          boxShadow:    `0 0 5px ${selectedColor.hex}`,
         }}
       />
 
@@ -65,3 +69,4 @@ export default function StatusBar({ selectedColor, stitchCount, isDragging, isBl
     </div>
   );
 }
+

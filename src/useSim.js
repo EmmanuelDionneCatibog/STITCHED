@@ -2,6 +2,12 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { snap, sameHole } from "./constants";
 
 const STORAGE_KEY = "stitched.sim.v1";
+const ZOOM_LEVELS = [0.7, 0.85, 1, 1.2, 1.45];
+const DEFAULT_ZOOM_LEVEL = 3;
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
 
 /**
  * useSim — all mutable embroidery state lives in a ref (sim.current) so
@@ -38,12 +44,18 @@ export function useSim(canvasRef) {
     // Camera offset in world px (top-left of viewport in world space)
     camX:        0,
     camY:        0,
+    // Zoom (world → screen multiplier)
+    zoomLevel:   DEFAULT_ZOOM_LEVEL,
+    zoom:        ZOOM_LEVELS[DEFAULT_ZOOM_LEVEL - 1],
+    lastClientX: null,
+    lastClientY: null,
   });
 
   // React state — only what the UI panels need
   const [stitchCount, setStitchCount] = useState(0);
   const [needlePos,   setNeedlePos]   = useState({ x: -999, y: -999 });
   const [isDragging,  setIsDragging]  = useState(false);
+  const [zoomLevel,   setZoomLevel]   = useState(DEFAULT_ZOOM_LEVEL);
   const [showTip,     setShowTip]     = useState(true);
   const [flash,       setFlash]       = useState("");
 
@@ -56,6 +68,7 @@ export function useSim(canvasRef) {
       lastExitHole: s.lastExitHole,
       camX: s.camX,
       camY: s.camY,
+      zoomLevel: s.zoomLevel,
       color: s.color,
     };
     try {
@@ -78,6 +91,12 @@ export function useSim(canvasRef) {
       if (data.lastExitHole && typeof data.lastExitHole.x === "number") s.lastExitHole = data.lastExitHole;
       if (typeof data.camX === "number") s.camX = data.camX;
       if (typeof data.camY === "number") s.camY = data.camY;
+      if (typeof data.zoomLevel === "number") {
+        const lvl = clamp(Math.round(data.zoomLevel), 1, ZOOM_LEVELS.length);
+        s.zoomLevel = lvl;
+        s.zoom = ZOOM_LEVELS[lvl - 1];
+        setZoomLevel(lvl);
+      }
       if (typeof data.color === "string") s.color = data.color;
       setStitchCount(s.stitches.filter(st => st && st.over).length);
       setShowTip(false);
@@ -94,6 +113,29 @@ export function useSim(canvasRef) {
     flashTimerRef.current = setTimeout(() => setFlash(""), 1400);
   }, []);
 
+  const applyZoomLevel = useCallback((lvl, clientX, clientY) => {
+    const s = sim.current;
+    const nextLevel = clamp(Math.round(lvl), 1, ZOOM_LEVELS.length);
+    const nextZoom  = ZOOM_LEVELS[nextLevel - 1];
+
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) {
+      const anchorCX = (typeof clientX === "number" ? clientX : rect.left + rect.width / 2) - rect.left;
+      const anchorCY = (typeof clientY === "number" ? clientY : rect.top + rect.height / 2) - rect.top;
+
+      // Keep the world point under the cursor fixed while zooming.
+      const worldX = (anchorCX / s.zoom) + s.camX;
+      const worldY = (anchorCY / s.zoom) + s.camY;
+      s.camX = worldX - (anchorCX / nextZoom);
+      s.camY = worldY - (anchorCY / nextZoom);
+    }
+
+    s.zoomLevel = nextLevel;
+    s.zoom      = nextZoom;
+    setZoomLevel(nextLevel);
+    persist();
+  }, [canvasRef, persist]);
+
   // ── Mouse move ───────────────────────────────────────────────────────────
   const handleMouseMove = useCallback((e) => {
     setNeedlePos({ x: e.clientX, y: e.clientY });
@@ -103,15 +145,18 @@ export function useSim(canvasRef) {
     const cy = e.clientY - rect.top;
     const s  = sim.current;
 
+    s.lastClientX = e.clientX;
+    s.lastClientY = e.clientY;
+
     if (s.isPanning && s.panStart) {
       const dx = cx - s.panStart.x;
       const dy = cy - s.panStart.y;
-      s.camX = s.panStart.camX - dx;
-      s.camY = s.panStart.camY - dy;
+      s.camX = s.panStart.camX - (dx / s.zoom);
+      s.camY = s.panStart.camY - (dy / s.zoom);
     }
 
-    const wx = cx + s.camX;
-    const wy = cy + s.camY;
+    const wx = (cx / s.zoom) + s.camX;
+    const wy = (cy / s.zoom) + s.camY;
     const h  = snap(wx, wy);
     s.hoverX   = h.x;
     s.hoverY   = h.y;
@@ -167,7 +212,9 @@ export function useSim(canvasRef) {
 
     const s    = sim.current;
     const rect = canvasRef.current.getBoundingClientRect();
-    const h    = snap((e.clientX - rect.left) + s.camX, (e.clientY - rect.top) + s.camY);
+    const wx   = ((e.clientX - rect.left) / s.zoom) + s.camX;
+    const wy   = ((e.clientY - rect.top) / s.zoom) + s.camY;
+    const h    = snap(wx, wy);
 
     // RULE 1: cannot enter the same hole the needle just exited
     if (sameHole(h, s.lastExitHole)) {
@@ -176,13 +223,23 @@ export function useSim(canvasRef) {
     }
 
     s.dragStart  = h;
-    s.dragCurX   = (e.clientX - rect.left) + s.camX;
-    s.dragCurY   = (e.clientY - rect.top) + s.camY;
+    s.dragCurX   = wx;
+    s.dragCurY   = wy;
     s.isDragging = true;
     setIsDragging(true);
   }, [canvasRef, showFlash]);
 
   // ── Mouse up ─────────────────────────────────────────────────────────────
+  const handleWheel = useCallback((e) => {
+    const s = sim.current;
+    if (s.isDragging || s.isPanning) return;
+    const dir = e.deltaY < 0 ? 1 : -1;
+    const next = clamp(s.zoomLevel + dir, 1, ZOOM_LEVELS.length);
+    if (next === s.zoomLevel) return;
+    e.preventDefault();
+    applyZoomLevel(next, e.clientX, e.clientY);
+  }, [applyZoomLevel]);
+
   const handleMouseUp = useCallback((e) => {
     const s = sim.current;
 
@@ -204,7 +261,9 @@ export function useSim(canvasRef) {
     if (!s.isDragging || !s.dragStart) return;
 
     const rect = canvasRef.current.getBoundingClientRect();
-    const end  = snap((e.clientX - rect.left) + s.camX, (e.clientY - rect.top) + s.camY);
+    const wx   = ((e.clientX - rect.left) / s.zoom) + s.camX;
+    const wy   = ((e.clientY - rect.top) / s.zoom) + s.camY;
+    const end  = snap(wx, wy);
 
     // Must release on a DIFFERENT hole from where the drag started
     if (sameHole(end, s.dragStart)) {
@@ -291,10 +350,13 @@ export function useSim(canvasRef) {
     s.lastExitHole = null;
     s.camX = 0;
     s.camY = 0;
+    s.zoomLevel = DEFAULT_ZOOM_LEVEL;
+    s.zoom      = ZOOM_LEVELS[DEFAULT_ZOOM_LEVEL - 1];
     s.isPanning = false;
     s.panStart  = null;
     setIsDragging(false);
     setStitchCount(0);
+    setZoomLevel(DEFAULT_ZOOM_LEVEL);
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
   }, []);
 
@@ -303,12 +365,18 @@ export function useSim(canvasRef) {
     stitchCount,
     needlePos,
     isDragging,
+    zoomLevel,
     showTip,
     flash,
     handleMouseMove,
     handleMouseLeave,
     handleMouseDown,
     handleMouseUp,
+    handleWheel,
+    setZoomLevel: (lvl) => {
+      const s = sim.current;
+      applyZoomLevel(lvl, s.lastClientX, s.lastClientY);
+    },
     handleUndo,
     handleClear,
   };

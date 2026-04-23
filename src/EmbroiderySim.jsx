@@ -39,6 +39,9 @@ export default function EmbroiderySim() {
     handleMouseLeave,
     handleMouseDown,
     handleMouseUp,
+    handleWheel,
+    zoomLevel,
+    setZoomLevel,
     handleUndo,
     handleClear,
   } = useSim(canvasRef);
@@ -102,6 +105,7 @@ export default function EmbroiderySim() {
         position:   "relative",
       }}
       onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
     >
       {/* Main render canvas */}
       <canvas
@@ -109,6 +113,7 @@ export default function EmbroiderySim() {
         style={{ display: "block", cursor: "none" }}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
+        onWheel={handleWheel}
         onMouseLeave={handleMouseLeave}
         onContextMenu={e => e.preventDefault()}
       />
@@ -140,7 +145,13 @@ export default function EmbroiderySim() {
         isBlocked={isBlocked}
       />
 
-      <Controls onUndo={handleUndo} onClear={handleClearAll} onSave={handleSavePng} />
+      <Controls
+        onUndo={handleUndo}
+        onClear={handleClearAll}
+        onSave={handleSavePng}
+        zoomLevel={zoomLevel}
+        onZoomLevel={setZoomLevel}
+      />
 
       <IntroTip visible={showTip} />
 
