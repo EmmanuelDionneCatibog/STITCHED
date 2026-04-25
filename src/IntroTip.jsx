@@ -38,7 +38,7 @@ export default function IntroTip({ visible }) {
             letterSpacing: "0.04em",
           }}
         >
-          Embroidery Studio
+          Stitched
         </div>
 
         <div style={{ color: "#6080b0", fontSize: 13, lineHeight: 2 }}>
@@ -50,7 +50,7 @@ export default function IntroTip({ visible }) {
           <br />
           <span style={{ color: "#90c0f0" }}>Hold right click + drag</span> — move the camera
           <br />
-          <span style={{ color: "#90c0f0" }}>Scroll</span> — change hole spacing
+          <span style={{ color: "#90c0f0" }}>Scroll</span> — infinite zoom
           <br />
           <span style={{ color: "#c07050" }}>⊗</span>
           <span style={{ color: "#304060", fontSize: 11 }}> you cannot re-enter the hole you just exited</span>
@@ -66,4 +66,3 @@ export default function IntroTip({ visible }) {
     </>
   );
 }
-
