@@ -2,8 +2,13 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { snap, sameHole } from "./constants";
 
 const STORAGE_KEY = "stitched.sim.v1";
-const ZOOM_LEVELS = [0.7, 0.85, 1, 1.2, 1.45];
-const DEFAULT_ZOOM_LEVEL = 3;
+// Legacy discrete zoom levels (kept only to migrate older localStorage saves)
+const LEGACY_ZOOM_LEVELS = [0.7, 0.85, 1, 1.2, 1.45];
+
+// Continuous zoom scale (world -> screen multiplier)
+const DEFAULT_ZOOM = 1;
+const MIN_ZOOM = 0.06;
+const MAX_ZOOM = 60;
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
@@ -45,8 +50,7 @@ export function useSim(canvasRef) {
     camX:        0,
     camY:        0,
     // Zoom (world → screen multiplier)
-    zoomLevel:   DEFAULT_ZOOM_LEVEL,
-    zoom:        ZOOM_LEVELS[DEFAULT_ZOOM_LEVEL - 1],
+    zoom:        DEFAULT_ZOOM,
     lastClientX: null,
     lastClientY: null,
   });
@@ -55,7 +59,7 @@ export function useSim(canvasRef) {
   const [stitchCount, setStitchCount] = useState(0);
   const [needlePos,   setNeedlePos]   = useState({ x: -999, y: -999 });
   const [isDragging,  setIsDragging]  = useState(false);
-  const [zoomLevel,   setZoomLevel]   = useState(DEFAULT_ZOOM_LEVEL);
+  const [zoomLevel,   setZoomLevel]   = useState(DEFAULT_ZOOM);
   const [showTip,     setShowTip]     = useState(true);
   const [flash,       setFlash]       = useState("");
 
@@ -68,7 +72,7 @@ export function useSim(canvasRef) {
       lastExitHole: s.lastExitHole,
       camX: s.camX,
       camY: s.camY,
-      zoomLevel: s.zoomLevel,
+      zoom: s.zoom,
       color: s.color,
     };
     try {
@@ -91,11 +95,16 @@ export function useSim(canvasRef) {
       if (data.lastExitHole && typeof data.lastExitHole.x === "number") s.lastExitHole = data.lastExitHole;
       if (typeof data.camX === "number") s.camX = data.camX;
       if (typeof data.camY === "number") s.camY = data.camY;
-      if (typeof data.zoomLevel === "number") {
-        const lvl = clamp(Math.round(data.zoomLevel), 1, ZOOM_LEVELS.length);
-        s.zoomLevel = lvl;
-        s.zoom = ZOOM_LEVELS[lvl - 1];
-        setZoomLevel(lvl);
+      if (typeof data.zoom === "number" && Number.isFinite(data.zoom)) {
+        const z = clamp(data.zoom, MIN_ZOOM, MAX_ZOOM);
+        s.zoom = z;
+        setZoomLevel(z);
+      } else if (typeof data.zoomLevel === "number") {
+        // Migrate legacy save format (discrete zoom levels 1..N)
+        const lvl = clamp(Math.round(data.zoomLevel), 1, LEGACY_ZOOM_LEVELS.length);
+        const z = LEGACY_ZOOM_LEVELS[lvl - 1];
+        s.zoom = z;
+        setZoomLevel(z);
       }
       if (typeof data.color === "string") s.color = data.color;
       setStitchCount(s.stitches.filter(st => st && st.over).length);
@@ -113,10 +122,13 @@ export function useSim(canvasRef) {
     flashTimerRef.current = setTimeout(() => setFlash(""), 1400);
   }, []);
 
-  const applyZoomLevel = useCallback((lvl, clientX, clientY) => {
+  const applyZoomLevel = useCallback((nextZoomRaw, clientX, clientY) => {
     const s = sim.current;
-    const nextLevel = clamp(Math.round(lvl), 1, ZOOM_LEVELS.length);
-    const nextZoom  = ZOOM_LEVELS[nextLevel - 1];
+    const nextZoom = clamp(
+      typeof nextZoomRaw === "number" && Number.isFinite(nextZoomRaw) ? nextZoomRaw : s.zoom,
+      MIN_ZOOM,
+      MAX_ZOOM
+    );
 
     const rect = canvasRef.current?.getBoundingClientRect();
     if (rect) {
@@ -130,9 +142,8 @@ export function useSim(canvasRef) {
       s.camY = worldY - (anchorCY / nextZoom);
     }
 
-    s.zoomLevel = nextLevel;
     s.zoom      = nextZoom;
-    setZoomLevel(nextLevel);
+    setZoomLevel(nextZoom);
     persist();
   }, [canvasRef, persist]);
 
@@ -233,11 +244,12 @@ export function useSim(canvasRef) {
   const handleWheel = useCallback((e) => {
     const s = sim.current;
     if (s.isDragging || s.isPanning) return;
-    const dir = e.deltaY < 0 ? 1 : -1;
-    const next = clamp(s.zoomLevel + dir, 1, ZOOM_LEVELS.length);
-    if (next === s.zoomLevel) return;
     e.preventDefault();
-    applyZoomLevel(next, e.clientX, e.clientY);
+
+    // Smooth, continuous zoom (no discrete levels).
+    const base = typeof s.zoom === "number" && Number.isFinite(s.zoom) ? s.zoom : DEFAULT_ZOOM;
+    const factor = Math.exp(-e.deltaY * 0.0015);
+    applyZoomLevel(base * factor, e.clientX, e.clientY);
   }, [applyZoomLevel]);
 
   const handleMouseUp = useCallback((e) => {
@@ -350,13 +362,12 @@ export function useSim(canvasRef) {
     s.lastExitHole = null;
     s.camX = 0;
     s.camY = 0;
-    s.zoomLevel = DEFAULT_ZOOM_LEVEL;
-    s.zoom      = ZOOM_LEVELS[DEFAULT_ZOOM_LEVEL - 1];
+    s.zoom      = DEFAULT_ZOOM;
     s.isPanning = false;
     s.panStart  = null;
     setIsDragging(false);
     setStitchCount(0);
-    setZoomLevel(DEFAULT_ZOOM_LEVEL);
+    setZoomLevel(DEFAULT_ZOOM);
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
   }, []);
 

@@ -47,17 +47,19 @@ export default function Controls({ onUndo, onClear, onSave, zoomLevel = 3, onZoo
           letterSpacing:  "0.08em",
         }}
       >
-        <span style={{ color: "#3a5070" }}>HOLE SPACING</span>
+        <span style={{ color: "#3a5070" }}>ZOOM</span>
         <input
           type="range"
-          min={1}
-          max={5}
-          step={1}
+          min={0.1}
+          max={12}
+          step={0.01}
           value={zoomLevel}
           onChange={(e) => onZoomLevel?.(Number(e.target.value))}
           style={{ width: 140 }}
         />
-        <span style={{ width: 14, textAlign: "right", color: "#90b8e0" }}>{zoomLevel}</span>
+        <span style={{ width: 48, textAlign: "right", color: "#90b8e0" }}>
+          {Number(zoomLevel).toFixed(2)}
+        </span>
       </div>
 
       <div style={{ display: "flex", gap: 10 }}>
